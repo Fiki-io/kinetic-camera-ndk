@@ -1,0 +1,6 @@
+{
+  "name": "Kinetic Camera",
+  "description": "High-throughput video and photo capture pipeline with kinematic zoom interpolation, hardware optical stabilization, and fixed frame pacing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
