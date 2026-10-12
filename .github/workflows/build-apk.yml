@@ -22,39 +22,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK & NDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 11076708
-
       - name: Install NDK and CMake
         run: |
-          yes | sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
       - name: Setup Gradle Cache (v4)
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
 
-      - name: Generate Debug Keystore
-        run: |
-          if [ ! -f debug.keystore ]; then
-            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-      - name: Grant Execute Permission for Gradle Wrapper
-        run: |
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-          fi
-
       - name: Build Debug APK
         run: |
-          if [ -f gradlew ]; then
-            ./gradlew assembleDebug --stacktrace
-          else
-            gradle assembleDebug --stacktrace
-          fi
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
