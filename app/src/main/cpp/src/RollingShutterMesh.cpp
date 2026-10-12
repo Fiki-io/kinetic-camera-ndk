@@ -51,8 +51,8 @@ void RollingShutterMesh::generateStaticGrid() {
 }
 
 void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float rollDelta, float readoutTimeRatio) {
-    // 24% Crop margin untuk menyerap seluruh sisa getaran dan hentakan kaki
-    const float cropScale = 0.76f;
+    // 20% Crop margin yang terukur presisi
+    const float cropScale = 0.80f;
 
     for (int r = 0; r <= rows; ++r) {
         float scanlineFraction = static_cast<float>(r) / static_cast<float>(rows);
@@ -78,9 +78,9 @@ void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float roll
             float rotU = centeredU * cosR - centeredV * sinR;
             float rotV = centeredU * sinR + centeredV * cosR;
 
-            // Kompensasi translasi 100% (penyerapan total hentakan vertikal dan horizontal)
-            rotU -= effectiveYaw   * 1.0f;
-            rotV += effectivePitch * 1.0f;
+            // Kompensasi translasi elastis halus tanpa patahan
+            rotU -= effectiveYaw   * 0.90f;
+            rotV += effectivePitch * 0.90f;
 
             // Kembalikan ke koordinat tekstur [0.0, 1.0]
             int vertexIndex = r * (cols + 1) + c;

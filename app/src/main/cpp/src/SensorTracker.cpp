@@ -97,53 +97,64 @@ void SensorTracker::pollEvents() {
 }
 
 void SensorTracker::processGyroSample(float gx, float gy, float gz, float dt) {
-    // 1. Akumulasi pergerakan fisik riil sensor
+    // 1. Integrasi orientasi fisik riil sensor
     rawPitch += gx * dt;
     rawYaw   += gy * dt;
     rawRoll  += gz * dt;
 
-    // 2. Lintasan kamera virtual yang halus (Virtual Gimbal Panning Low-Pass)
-    // alpha 0.975 memberikan stabilitas super kokoh pada hentakan langkah kaki
-    const float alpha = 0.975f;
-    smoothPitch = alpha * smoothPitch + (1.0f - alpha) * rawPitch;
-    smoothYaw   = alpha * smoothYaw   + (1.0f - alpha) * rawYaw;
-    smoothRoll  = alpha * smoothRoll  + (1.0f - alpha) * rawRoll;
+    // 2. SmoothTrack Adaptive Filter (Menghilangkan efek "jedag" / snap mendadak)
+    // Selisih antara kamera virtual dan orientasi fisik
+    float errorPitch = rawPitch - smoothPitch;
+    float errorYaw   = rawYaw   - smoothYaw;
+    float errorRoll  = rawRoll  - smoothRoll;
 
-    // 3. Batasi drift jangka panjang
+    // Jika gerakan kecil (getaran/hentakan jalan): ikuti secara sangat lambat (alpha tinggi)
+    // Jika gerakan besar (pengguna sengaja memutar HP): ikuti secara proporsional dan lembut agar tidak tertinggal jauh
+    float speedFactorPitch = 1.0f + 12.0f * (errorPitch * errorPitch);
+    float speedFactorYaw   = 1.0f + 12.0f * (errorYaw * errorYaw);
+    float speedFactorRoll  = 1.0f + 12.0f * (errorRoll * errorRoll);
+
+    float followRatePitch = std::min(0.15f, 0.025f * speedFactorPitch);
+    float followRateYaw   = std::min(0.15f, 0.025f * speedFactorYaw);
+    float followRateRoll  = std::min(0.15f, 0.025f * speedFactorRoll);
+
+    smoothPitch += errorPitch * followRatePitch;
+    smoothYaw   += errorYaw   * followRateYaw;
+    smoothRoll  += errorRoll  * followRateRoll;
+
+    // 3. Redam akumulasi drift absolut
     rawPitch *= 0.999f;
     rawYaw   *= 0.999f;
     rawRoll  *= 0.999f;
+    smoothPitch *= 0.999f;
+    smoothYaw   *= 0.999f;
+    smoothRoll  *= 0.999f;
 }
 
 void SensorTracker::processAccelSample(float /*ax*/, float ay, float /*az*/, float dt) {
-    // Sumbu Y ponsel mengukur akselerasi naik-turun akibat hentakan kaki (footstep impact)
-    // Terapkan high-pass leaky integrator untuk menyerap sentakan vertikal
+    // Sumbu Y ponsel mengukur hentakan naik-turun kaki
     verticalVelocity += ay * dt;
-    verticalVelocity *= 0.92f; // redam akumulasi kecepatan
+    verticalVelocity *= 0.90f; // peredaman viscous damper
 
     verticalBounceOffset += verticalVelocity * dt;
-    verticalBounceOffset *= 0.90f; // pegas pemulih posisi pusat
+    verticalBounceOffset *= 0.88f; // pegas kembali ke posisi nol tanpa snapping
 }
 
 void SensorTracker::getLatestAngularDisplacement(float* outPitch, float* outYaw, float* outRoll) {
     std::lock_guard<std::mutex> lock(dataMutex);
     pollEvents();
 
-    // Kompensasi rotasi penuh (100% inversi getaran)
-    float diffPitch = smoothPitch - rawPitch;
+    // Selisih kompensasi kontinu
+    float diffPitch = smoothPitch - rawPitch + (verticalBounceOffset * 0.25f);
     float diffYaw   = smoothYaw   - rawYaw;
-    float diffRoll  = smoothRoll  - rawRoll;
+    float diffRoll  = (smoothRoll - rawRoll) * 1.1f; // Horizon Roll Leveling halus
 
-    // Tambahkan kompensasi translasi hentakan vertikal murni ke sumbu pitch
-    diffPitch += verticalBounceOffset * 0.35f;
-
-    // Horizon Lock yang kokoh: kalikan roll dengan faktor 1.15 untuk mengunci cakrawala rata
-    diffRoll *= 1.15f;
-
-    const float maxAngleRad = 0.22f; // ~12.6 derajat
-    *outPitch = std::clamp(diffPitch, -maxAngleRad, maxAngleRad);
-    *outYaw   = std::clamp(diffYaw,   -maxAngleRad, maxAngleRad);
-    *outRoll  = std::clamp(diffRoll,  -maxAngleRad, maxAngleRad);
+    // BATAS LEMBUT HIPERBOLIK (Zero Snapping / Anti-Jedag):
+    // Menggunakan tanh() alih-alih std::clamp() agar transisi 100% mulus kontinu tanpa tabrakan dinding batas
+    const float softLimitRad = 0.16f; // ~9.2 derajat aman di dalam margin crop
+    *outPitch = std::tanh(diffPitch / softLimitRad) * softLimitRad;
+    *outYaw   = std::tanh(diffYaw   / softLimitRad) * softLimitRad;
+    *outRoll  = std::tanh(diffRoll  / softLimitRad) * softLimitRad;
 }
 
 void SensorTracker::reset() {
