@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <mutex>
+#include <android/native_window.h>
 #include "SensorTracker.hpp"
 #include "RollingShutterMesh.hpp"
 #include "GpuWarpRenderer.hpp"
@@ -14,10 +15,13 @@ public:
     bool initialize();
     void release();
 
+    bool setPreviewWindow(ANativeWindow* window);
+    bool setEncoderWindow(ANativeWindow* window);
+
     void setStabilizationEnabled(bool enabled);
     bool isStabilizationEnabled() const;
 
-    void processAndRender(int oesTextureId, int width, int height);
+    void onFrameAvailable(int oesTextureId, const float* texMatrix);
 
 private:
     NativeStabilizerEngine();

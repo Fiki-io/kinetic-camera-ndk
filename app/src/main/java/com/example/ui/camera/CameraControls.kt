@@ -127,7 +127,7 @@ fun TopTelemetryHeader(
                 )
 
                 Text(
-                    text = "EIS",
+                    text = "NDK STAB",
                     color = SoftOffWhite,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,

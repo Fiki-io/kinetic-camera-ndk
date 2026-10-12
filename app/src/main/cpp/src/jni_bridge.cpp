@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <android/native_window_jni.h>
 #include "NativeStabilizerEngine.hpp"
 
 extern "C" {
@@ -19,6 +20,32 @@ Java_com_example_camera_nativeengine_NativeStabilizer_nativeRelease(
     NativeStabilizerEngine::getInstance().release();
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_example_camera_nativeengine_NativeStabilizer_nativeSetPreviewSurface(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jobject surface
+) {
+    ANativeWindow* window = nullptr;
+    if (surface != nullptr) {
+        window = ANativeWindow_fromSurface(env, surface);
+    }
+    return static_cast<jboolean>(NativeStabilizerEngine::getInstance().setPreviewWindow(window));
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_example_camera_nativeengine_NativeStabilizer_nativeSetEncoderSurface(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jobject surface
+) {
+    ANativeWindow* window = nullptr;
+    if (surface != nullptr) {
+        window = ANativeWindow_fromSurface(env, surface);
+    }
+    return static_cast<jboolean>(NativeStabilizerEngine::getInstance().setEncoderWindow(window));
+}
+
 JNIEXPORT void JNICALL
 Java_com_example_camera_nativeengine_NativeStabilizer_nativeSetEnabled(
     JNIEnv* /* env */,
@@ -37,14 +64,22 @@ Java_com_example_camera_nativeengine_NativeStabilizer_nativeIsEnabled(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_camera_nativeengine_NativeStabilizer_nativeRender(
-    JNIEnv* /* env */,
+Java_com_example_camera_nativeengine_NativeStabilizer_nativeOnFrameAvailable(
+    JNIEnv* env,
     jobject /* thiz */,
     jint oesTextureId,
-    jint width,
-    jint height
+    jfloatArray texMatrixArray
 ) {
-    NativeStabilizerEngine::getInstance().processAndRender(oesTextureId, width, height);
+    jfloat* matrixElements = nullptr;
+    if (texMatrixArray != nullptr) {
+        matrixElements = env->GetFloatArrayElements(texMatrixArray, nullptr);
+    }
+
+    NativeStabilizerEngine::getInstance().onFrameAvailable(oesTextureId, matrixElements);
+
+    if (texMatrixArray != nullptr && matrixElements != nullptr) {
+        env->ReleaseFloatArrayElements(texMatrixArray, matrixElements, JNI_ABORT);
+    }
 }
 
 } // extern "C"

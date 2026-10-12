@@ -24,16 +24,14 @@ bool NativeStabilizerEngine::initialize() {
     std::lock_guard<std::mutex> lock(engineMutex);
     if (isInitialized) return true;
 
-    if (!renderer->init()) {
+    if (!renderer->initEGL()) {
         return false;
     }
 
-    if (!sensorTracker->start()) {
-        LOGI("SensorTracker fallback atau simulasi aktif");
-    }
+    sensorTracker->start();
 
     isInitialized = true;
-    LOGI("NativeStabilizerEngine berhasil diinisialisasi");
+    LOGI("NativeStabilizerEngine EGL pipeline berhasil aktif");
     return true;
 }
 
@@ -48,6 +46,26 @@ void NativeStabilizerEngine::release() {
     LOGI("NativeStabilizerEngine berhasil dilepas");
 }
 
+bool NativeStabilizerEngine::setPreviewWindow(ANativeWindow* window) {
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (!isInitialized) {
+        if (!renderer->initEGL()) return false;
+        sensorTracker->start();
+        isInitialized = true;
+    }
+    return renderer->setPreviewWindow(window);
+}
+
+bool NativeStabilizerEngine::setEncoderWindow(ANativeWindow* window) {
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (!isInitialized) {
+        if (!renderer->initEGL()) return false;
+        sensorTracker->start();
+        isInitialized = true;
+    }
+    return renderer->setEncoderWindow(window);
+}
+
 void NativeStabilizerEngine::setStabilizationEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(engineMutex);
     isEnabled = enabled;
@@ -58,17 +76,18 @@ bool NativeStabilizerEngine::isStabilizationEnabled() const {
     return isEnabled;
 }
 
-void NativeStabilizerEngine::processAndRender(int oesTextureId, int width, int height) {
+void NativeStabilizerEngine::onFrameAvailable(int oesTextureId, const float* texMatrix) {
     std::lock_guard<std::mutex> lock(engineMutex);
     if (!isInitialized) return;
 
     float pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
     if (isEnabled) {
         sensorTracker->getLatestAngularDisplacement(&pitch, &yaw, &roll);
-        mesh->updateMesh(pitch, yaw, roll, 0.02f);
+        // Terapkan koreksi deformasi scanline non-linear untuk menyerap hentakan langkah kaki
+        mesh->updateMesh(pitch, yaw, roll, 0.025f);
     } else {
         mesh->updateMesh(0.0f, 0.0f, 0.0f, 0.0f);
     }
 
-    renderer->render(static_cast<GLuint>(oesTextureId), *mesh, width, height);
+    renderer->renderToSurfaces(static_cast<GLuint>(oesTextureId), *mesh, texMatrix);
 }

@@ -31,6 +31,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.example.camera.model.CameraConfiguration
+import com.example.camera.nativeengine.NativeStabilizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -62,6 +63,12 @@ class CameraPipelineManager(
         } catch (_: Throwable) {
             supportedFpsRanges = listOf(Range(30, 30))
         }
+
+        // Aktifkan C++ Native Stabilizer Engine
+        try {
+            NativeStabilizer.initialize()
+            NativeStabilizer.setEnabled(true)
+        } catch (_: Throwable) {}
     }
 
     fun initialize(
@@ -70,6 +77,8 @@ class CameraPipelineManager(
         onInitialized: (minZoom: Float, maxZoom: Float) -> Unit
     ) {
         currentConfig = config
+        NativeStabilizer.setEnabled(config.isEisStabilizationEnabled)
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
@@ -87,6 +96,8 @@ class CameraPipelineManager(
         onInitialized: (minZoom: Float, maxZoom: Float) -> Unit
     ) {
         currentConfig = config
+        NativeStabilizer.setEnabled(config.isEisStabilizationEnabled)
+
         val provider = cameraProvider ?: return
         try {
             bindCameraUseCases(previewView, config, onInitialized)
@@ -107,7 +118,7 @@ class CameraPipelineManager(
 
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-        // 1. Setup Preview dengan Preview Stabilization bawaan jika didukung
+        // 1. Setup Preview
         val previewBuilder = Preview.Builder()
         var isPreviewStabilizationSupported = false
 
@@ -136,7 +147,7 @@ class CameraPipelineManager(
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .build()
 
-        // 3. Setup Video Recorder dengan Video Stabilization resmi
+        // 3. Setup Video Recorder
         val qualitySelector = QualitySelector.fromOrderedList(
             listOf(Quality.FHD, Quality.HD, Quality.SD),
             FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
@@ -180,7 +191,7 @@ class CameraPipelineManager(
 
             onStabilizationStatusConfirmed?.invoke(
                 config.isOisLocked,
-                isPreviewStabilizationSupported || config.isEisStabilizationEnabled
+                NativeStabilizer.isNativeReady() || isPreviewStabilizationSupported || config.isEisStabilizationEnabled
             )
         } catch (t: Throwable) {
             onError?.invoke("Gagal mengikat use case kamera: ${t.message}")
@@ -192,7 +203,7 @@ class CameraPipelineManager(
             val camera2Control = Camera2CameraControl.from(boundCamera.cameraControl)
             val requestOptionsBuilder = CaptureRequestOptions.Builder()
 
-            // 1. Kunci suspensi motor optik fisik OIS pada modul 50MP
+            // 1. Kunci motor suspensi fisik OIS pada modul 50MP
             if (config.isOisLocked) {
                 requestOptionsBuilder.setCaptureRequestOption(
                     CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
@@ -401,6 +412,7 @@ class CameraPipelineManager(
     fun release() {
         stopRecording()
         try {
+            NativeStabilizer.release()
             cameraProvider?.unbindAll()
         } catch (_: Throwable) {}
     }

@@ -1,5 +1,7 @@
 package com.example.camera.nativeengine
 
+import android.view.Surface
+
 object NativeStabilizer {
 
     private var isLibraryLoaded = false
@@ -31,6 +33,24 @@ object NativeStabilizer {
         } catch (_: Throwable) {}
     }
 
+    fun setPreviewSurface(surface: Surface?): Boolean {
+        if (!isLibraryLoaded) return false
+        return try {
+            nativeSetPreviewSurface(surface)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun setEncoderSurface(surface: Surface?): Boolean {
+        if (!isLibraryLoaded) return false
+        return try {
+            nativeSetEncoderSurface(surface)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     fun setEnabled(enabled: Boolean) {
         if (!isLibraryLoaded) return
         try {
@@ -47,16 +67,18 @@ object NativeStabilizer {
         }
     }
 
-    fun render(oesTextureId: Int, width: Int, height: Int) {
+    fun onFrameAvailable(oesTextureId: Int, texMatrix: FloatArray) {
         if (!isLibraryLoaded) return
         try {
-            nativeRender(oesTextureId, width, height)
+            nativeOnFrameAvailable(oesTextureId, texMatrix)
         } catch (_: Throwable) {}
     }
 
     private external fun nativeInit(): Boolean
     private external fun nativeRelease()
+    private external fun nativeSetPreviewSurface(surface: Surface?): Boolean
+    private external fun nativeSetEncoderSurface(surface: Surface?): Boolean
     private external fun nativeSetEnabled(enabled: Boolean)
     private external fun nativeIsEnabled(): Boolean
-    private external fun nativeRender(oesTextureId: Int, width: Int, height: Int)
+    private external fun nativeOnFrameAvailable(oesTextureId: Int, texMatrix: FloatArray)
 }
