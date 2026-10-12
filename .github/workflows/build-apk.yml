@@ -22,10 +22,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install NDK and CMake
+      - name: Configure Pre-installed NDK
         run: |
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.3.13750724" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.3.13750724" >> $GITHUB_ENV
 
       - name: Setup Gradle Cache (v4)
         uses: gradle/actions/setup-gradle@v4
@@ -36,9 +36,30 @@ jobs:
         run: |
           ./gradlew assembleDebug --stacktrace
 
-      - name: Upload Debug APK Artifact
+      - name: Upload to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kinetic-camera-ndk-debug
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
+
+      - name: Upload APK to Gofile
+        id: upload_gofile
+        run: |
+          APK_FILE=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          if [ -f "$APK_FILE" ]; then
+            echo "Uploading $APK_FILE to Gofile..."
+            UPLOAD_RES=$(curl -s -F "file=@$APK_FILE" https://store3.gofile.io/contents/uploadfile)
+            echo "API Response: $UPLOAD_RES"
+            DOWNLOAD_URL=$(echo $UPLOAD_RES | jq -r '.data.downloadPage // empty')
+            if [ -n "$DOWNLOAD_URL" ]; then
+              echo "DOWNLOAD_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
+              echo "### Tautan Unduh APK Gofile: $DOWNLOAD_URL" >> $GITHUB_STEP_SUMMARY
+              echo "Tautan berhasil dibuat: $DOWNLOAD_URL"
+            else
+              echo "Gagal mem-parsing download URL dari Gofile"
+            fi
+          else
+            echo "File APK tidak ditemukan"
+            exit 1
+          fi

@@ -32,10 +32,10 @@ android {
   }
 
   if (isGitHubActions) {
+    ndkVersion = "27.3.13750724"
     externalNativeBuild {
       cmake {
         path = file("src/main/cpp/CMakeLists.txt")
-        version = "3.22.1"
       }
     }
   }
