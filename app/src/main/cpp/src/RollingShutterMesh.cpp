@@ -51,12 +51,12 @@ void RollingShutterMesh::generateStaticGrid() {
 }
 
 void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float rollDelta, float readoutTimeRatio) {
-    // 20% Crop margin untuk menyerap hentakan langkah kaki secara maksimal
-    const float cropScale = 0.80f;
+    // 24% Crop margin untuk menyerap seluruh sisa getaran dan hentakan kaki
+    const float cropScale = 0.76f;
 
     for (int r = 0; r <= rows; ++r) {
         float scanlineFraction = static_cast<float>(r) / static_cast<float>(rows);
-        // Deformasi scanline CMOS (koreksi rolling shutter nanodetik)
+        // Deformasi scanline CMOS diferensial (koreksi distorsi jelly sensor 50MP)
         float rowPhaseOffset = (scanlineFraction - 0.5f) * readoutTimeRatio;
 
         float effectiveYaw   = yawDelta   + (yawDelta   * rowPhaseOffset);
@@ -74,13 +74,13 @@ void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float roll
             float centeredU = (baseU - 0.5f) * cropScale;
             float centeredV = (baseV - 0.5f) * cropScale;
 
-            // Rotasi roll horizon
+            // Rotasi roll horizon level
             float rotU = centeredU * cosR - centeredV * sinR;
             float rotV = centeredU * sinR + centeredV * cosR;
 
-            // Kompensasi translasi penuh (meredam 95% sentakan hentakan langkah kaki)
-            rotU -= effectiveYaw   * 0.95f;
-            rotV += effectivePitch * 0.95f;
+            // Kompensasi translasi 100% (penyerapan total hentakan vertikal dan horizontal)
+            rotU -= effectiveYaw   * 1.0f;
+            rotV += effectivePitch * 1.0f;
 
             // Kembalikan ke koordinat tekstur [0.0, 1.0]
             int vertexIndex = r * (cols + 1) + c;

@@ -9,6 +9,7 @@
 SensorTracker::SensorTracker()
     : sensorManager(nullptr),
       gyroSensor(nullptr),
+      accelSensor(nullptr),
       eventQueue(nullptr),
       looper(nullptr),
       rawPitch(0.0f),
@@ -17,6 +18,8 @@ SensorTracker::SensorTracker()
       smoothPitch(0.0f),
       smoothYaw(0.0f),
       smoothRoll(0.0f),
+      verticalVelocity(0.0f),
+      verticalBounceOffset(0.0f),
       lastTimestampNs(0),
       isRunning(false) {}
 
@@ -32,6 +35,11 @@ bool SensorTracker::start() {
     if (!sensorManager) return false;
 
     gyroSensor = ASensorManager_getDefaultSensor(sensorManager, ASENSOR_TYPE_GYROSCOPE);
+    accelSensor = ASensorManager_getDefaultSensor(sensorManager, ASENSOR_TYPE_LINEAR_ACCELERATION);
+    if (!accelSensor) {
+        accelSensor = ASensorManager_getDefaultSensor(sensorManager, ASENSOR_TYPE_ACCELEROMETER);
+    }
+
     if (!gyroSensor) return false;
 
     looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
@@ -39,12 +47,16 @@ bool SensorTracker::start() {
     if (!eventQueue) return false;
 
     ASensorEventQueue_enableSensor(eventQueue, gyroSensor);
-    // 200 Hz sampling (5000 microseconds)
-    ASensorEventQueue_setEventRate(eventQueue, gyroSensor, 5000);
+    ASensorEventQueue_setEventRate(eventQueue, gyroSensor, 5000); // 200 Hz
+
+    if (accelSensor) {
+        ASensorEventQueue_enableSensor(eventQueue, accelSensor);
+        ASensorEventQueue_setEventRate(eventQueue, accelSensor, 5000);
+    }
 
     isRunning = true;
     lastTimestampNs = 0;
-    LOGI("SensorTracker 200Hz loop aktif");
+    LOGI("SensorTracker Gyro + Accel 200Hz loop aktif");
     return true;
 }
 
@@ -52,8 +64,9 @@ void SensorTracker::stop() {
     std::lock_guard<std::mutex> lock(dataMutex);
     if (!isRunning) return;
 
-    if (eventQueue && gyroSensor) {
-        ASensorEventQueue_disableSensor(eventQueue, gyroSensor);
+    if (eventQueue) {
+        if (gyroSensor) ASensorEventQueue_disableSensor(eventQueue, gyroSensor);
+        if (accelSensor) ASensorEventQueue_disableSensor(eventQueue, accelSensor);
     }
     if (sensorManager && eventQueue) {
         ASensorManager_destroyEventQueue(sensorManager, eventQueue);
@@ -69,27 +82,29 @@ void SensorTracker::pollEvents() {
 
     ASensorEvent event;
     while (ASensorEventQueue_getEvents(eventQueue, &event, 1) > 0) {
-        if (event.type != ASENSOR_TYPE_GYROSCOPE) continue;
-
         if (lastTimestampNs != 0) {
             float dt = (event.timestamp - lastTimestampNs) * 1.0e-9f;
             if (dt > 0.0001f && dt < 0.05f) {
-                processSample(event.vector.x, event.vector.y, event.vector.z, dt);
+                if (event.type == ASENSOR_TYPE_GYROSCOPE) {
+                    processGyroSample(event.vector.x, event.vector.y, event.vector.z, dt);
+                } else if (event.type == ASENSOR_TYPE_LINEAR_ACCELERATION || event.type == ASENSOR_TYPE_ACCELEROMETER) {
+                    processAccelSample(event.vector.x, event.vector.y, event.vector.z, dt);
+                }
             }
         }
         lastTimestampNs = event.timestamp;
     }
 }
 
-void SensorTracker::processSample(float gx, float gy, float gz, float dt) {
+void SensorTracker::processGyroSample(float gx, float gy, float gz, float dt) {
     // 1. Akumulasi pergerakan fisik riil sensor
     rawPitch += gx * dt;
     rawYaw   += gy * dt;
     rawRoll  += gz * dt;
 
     // 2. Lintasan kamera virtual yang halus (Virtual Gimbal Panning Low-Pass)
-    // alpha 0.965 pada 200 Hz memberikan waktu respons ~0.7 detik (sangat mulus menahan hentakan kaki)
-    const float alpha = 0.965f;
+    // alpha 0.975 memberikan stabilitas super kokoh pada hentakan langkah kaki
+    const float alpha = 0.975f;
     smoothPitch = alpha * smoothPitch + (1.0f - alpha) * rawPitch;
     smoothYaw   = alpha * smoothYaw   + (1.0f - alpha) * rawYaw;
     smoothRoll  = alpha * smoothRoll  + (1.0f - alpha) * rawRoll;
@@ -100,18 +115,32 @@ void SensorTracker::processSample(float gx, float gy, float gz, float dt) {
     rawRoll  *= 0.999f;
 }
 
+void SensorTracker::processAccelSample(float /*ax*/, float ay, float /*az*/, float dt) {
+    // Sumbu Y ponsel mengukur akselerasi naik-turun akibat hentakan kaki (footstep impact)
+    // Terapkan high-pass leaky integrator untuk menyerap sentakan vertikal
+    verticalVelocity += ay * dt;
+    verticalVelocity *= 0.92f; // redam akumulasi kecepatan
+
+    verticalBounceOffset += verticalVelocity * dt;
+    verticalBounceOffset *= 0.90f; // pegas pemulih posisi pusat
+}
+
 void SensorTracker::getLatestAngularDisplacement(float* outPitch, float* outYaw, float* outRoll) {
     std::lock_guard<std::mutex> lock(dataMutex);
     pollEvents();
 
-    // Kompensasi adalah SELISIH antara lintasan halus dan pergerakan mendadak
-    // (Peredaman hentakan langkah kaki dan getaran tangan 1:1)
+    // Kompensasi rotasi penuh (100% inversi getaran)
     float diffPitch = smoothPitch - rawPitch;
-    float diffYaw   = smoothYaw - rawYaw;
-    float diffRoll  = smoothRoll - rawRoll;
+    float diffYaw   = smoothYaw   - rawYaw;
+    float diffRoll  = smoothRoll  - rawRoll;
 
-    // Batasi maksimum simpangan agar tidak melompat melebihi batas buffer (clamping)
-    const float maxAngleRad = 0.18f; // ~10.3 derajat
+    // Tambahkan kompensasi translasi hentakan vertikal murni ke sumbu pitch
+    diffPitch += verticalBounceOffset * 0.35f;
+
+    // Horizon Lock yang kokoh: kalikan roll dengan faktor 1.15 untuk mengunci cakrawala rata
+    diffRoll *= 1.15f;
+
+    const float maxAngleRad = 0.22f; // ~12.6 derajat
     *outPitch = std::clamp(diffPitch, -maxAngleRad, maxAngleRad);
     *outYaw   = std::clamp(diffYaw,   -maxAngleRad, maxAngleRad);
     *outRoll  = std::clamp(diffRoll,  -maxAngleRad, maxAngleRad);
@@ -124,5 +153,7 @@ void SensorTracker::reset() {
     smoothPitch = 0.0f;
     smoothYaw = 0.0f;
     smoothRoll = 0.0f;
+    verticalVelocity = 0.0f;
+    verticalBounceOffset = 0.0f;
     lastTimestampNs = 0;
 }
