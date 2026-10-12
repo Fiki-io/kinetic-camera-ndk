@@ -3,14 +3,6 @@
 
 #include <android/sensor.h>
 #include <mutex>
-#include <vector>
-
-struct GyroSample {
-    int64_t timestampNs;
-    float x;
-    float y;
-    float z;
-};
 
 class SensorTracker {
 public:
@@ -23,8 +15,6 @@ public:
     void getLatestAngularDisplacement(float* outPitch, float* outYaw, float* outRoll);
     void reset();
 
-    void onSensorEvent(const ASensorEvent& event);
-
 private:
     ASensorManager* sensorManager;
     const ASensor* gyroSensor;
@@ -32,11 +22,22 @@ private:
     ALooper* looper;
 
     std::mutex dataMutex;
-    float integratedPitch;
-    float integratedYaw;
-    float integratedRoll;
+
+    // Integrasi raw
+    float rawPitch;
+    float rawYaw;
+    float rawRoll;
+
+    // Lintasan halus (Smooth Target Trajectory)
+    float smoothPitch;
+    float smoothYaw;
+    float smoothRoll;
+
     int64_t lastTimestampNs;
     bool isRunning;
+
+    void pollEvents();
+    void processSample(float gx, float gy, float gz, float dt);
 };
 
 #endif // KINETIC_SENSOR_TRACKER_HPP

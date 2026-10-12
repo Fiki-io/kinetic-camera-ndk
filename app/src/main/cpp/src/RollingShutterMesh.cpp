@@ -51,18 +51,17 @@ void RollingShutterMesh::generateStaticGrid() {
 }
 
 void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float rollDelta, float readoutTimeRatio) {
-    // Margin crop 15% untuk menyerap distorsi tepi
-    const float cropScale = 0.85f;
-    const float halfCropOffset = (1.0f - cropScale) * 0.5f;
+    // 20% Crop margin untuk menyerap hentakan langkah kaki secara maksimal
+    const float cropScale = 0.80f;
 
     for (int r = 0; r <= rows; ++r) {
         float scanlineFraction = static_cast<float>(r) / static_cast<float>(rows);
-        // Deformasi diferensial per baris scanline sensor (kunci anti-jelly)
+        // Deformasi scanline CMOS (koreksi rolling shutter nanodetik)
         float rowPhaseOffset = (scanlineFraction - 0.5f) * readoutTimeRatio;
 
-        float effectiveYaw = yawDelta + (yawDelta * rowPhaseOffset);
+        float effectiveYaw   = yawDelta   + (yawDelta   * rowPhaseOffset);
         float effectivePitch = pitchDelta + (pitchDelta * rowPhaseOffset);
-        float effectiveRoll = rollDelta + (rollDelta * rowPhaseOffset);
+        float effectiveRoll  = rollDelta  + (rollDelta  * rowPhaseOffset);
 
         float cosR = std::cos(-effectiveRoll);
         float sinR = std::sin(-effectiveRoll);
@@ -71,7 +70,7 @@ void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float roll
             float baseU = static_cast<float>(c) / static_cast<float>(cols);
             float baseV = scanlineFraction;
 
-            // Skala ke dalam crop area
+            // Skala ke dalam crop area aman
             float centeredU = (baseU - 0.5f) * cropScale;
             float centeredV = (baseV - 0.5f) * cropScale;
 
@@ -79,11 +78,11 @@ void RollingShutterMesh::updateMesh(float pitchDelta, float yawDelta, float roll
             float rotU = centeredU * cosR - centeredV * sinR;
             float rotV = centeredU * sinR + centeredV * cosR;
 
-            // Translasi yaw dan pitch
-            rotU -= effectiveYaw * 0.45f;
-            rotV += effectivePitch * 0.45f;
+            // Kompensasi translasi penuh (meredam 95% sentakan hentakan langkah kaki)
+            rotU -= effectiveYaw   * 0.95f;
+            rotV += effectivePitch * 0.95f;
 
-            // Kembalikan ke koordinat [0.0, 1.0]
+            // Kembalikan ke koordinat tekstur [0.0, 1.0]
             int vertexIndex = r * (cols + 1) + c;
             vertices[vertexIndex].u = rotU + 0.5f;
             vertices[vertexIndex].v = rotV + 0.5f;

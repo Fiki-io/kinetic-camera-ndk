@@ -1,27 +1,22 @@
 #include "SensorTracker.hpp"
 #include <android/log.h>
 #include <cmath>
+#include <algorithm>
 
 #define LOG_TAG "SensorTrackerNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-
-static int sensorCallback(int fd, int events, void* data) {
-    auto* tracker = static_cast<SensorTracker*>(data);
-    ASensorEvent event;
-    while (ASensorEventQueue_getEvents(static_cast<ASensorEventQueue*>(data), &event, 1) > 0) {
-        tracker->onSensorEvent(event);
-    }
-    return 1;
-}
 
 SensorTracker::SensorTracker()
     : sensorManager(nullptr),
       gyroSensor(nullptr),
       eventQueue(nullptr),
       looper(nullptr),
-      integratedPitch(0.0f),
-      integratedYaw(0.0f),
-      integratedRoll(0.0f),
+      rawPitch(0.0f),
+      rawYaw(0.0f),
+      rawRoll(0.0f),
+      smoothPitch(0.0f),
+      smoothYaw(0.0f),
+      smoothRoll(0.0f),
       lastTimestampNs(0),
       isRunning(false) {}
 
@@ -49,6 +44,7 @@ bool SensorTracker::start() {
 
     isRunning = true;
     lastTimestampNs = 0;
+    LOGI("SensorTracker 200Hz loop aktif");
     return true;
 }
 
@@ -68,41 +64,65 @@ void SensorTracker::stop() {
     reset();
 }
 
-void SensorTracker::onSensorEvent(const ASensorEvent& event) {
-    if (event.type != ASENSOR_TYPE_GYROSCOPE) return;
+void SensorTracker::pollEvents() {
+    if (!eventQueue) return;
 
-    std::lock_guard<std::mutex> lock(dataMutex);
-    if (lastTimestampNs != 0) {
-        float dt = (event.timestamp - lastTimestampNs) * 1.0e-9f;
-        if (dt > 0.0001f && dt < 0.05f) {
-            float gx = event.vector.x;
-            float gy = event.vector.y;
-            float gz = event.vector.z;
+    ASensorEvent event;
+    while (ASensorEventQueue_getEvents(eventQueue, &event, 1) > 0) {
+        if (event.type != ASENSOR_TYPE_GYROSCOPE) continue;
 
-            // Integrasi kecepatan sudut ke sudut perpindahan (radian)
-            integratedPitch += gx * dt;
-            integratedYaw += gy * dt;
-            integratedRoll += gz * dt;
-
-            // Inersial leaky decay untuk stabilisasi drift jangka panjang
-            integratedPitch *= 0.985f;
-            integratedYaw *= 0.985f;
-            integratedRoll *= 0.985f;
+        if (lastTimestampNs != 0) {
+            float dt = (event.timestamp - lastTimestampNs) * 1.0e-9f;
+            if (dt > 0.0001f && dt < 0.05f) {
+                processSample(event.vector.x, event.vector.y, event.vector.z, dt);
+            }
         }
+        lastTimestampNs = event.timestamp;
     }
-    lastTimestampNs = event.timestamp;
+}
+
+void SensorTracker::processSample(float gx, float gy, float gz, float dt) {
+    // 1. Akumulasi pergerakan fisik riil sensor
+    rawPitch += gx * dt;
+    rawYaw   += gy * dt;
+    rawRoll  += gz * dt;
+
+    // 2. Lintasan kamera virtual yang halus (Virtual Gimbal Panning Low-Pass)
+    // alpha 0.965 pada 200 Hz memberikan waktu respons ~0.7 detik (sangat mulus menahan hentakan kaki)
+    const float alpha = 0.965f;
+    smoothPitch = alpha * smoothPitch + (1.0f - alpha) * rawPitch;
+    smoothYaw   = alpha * smoothYaw   + (1.0f - alpha) * rawYaw;
+    smoothRoll  = alpha * smoothRoll  + (1.0f - alpha) * rawRoll;
+
+    // 3. Batasi drift jangka panjang
+    rawPitch *= 0.999f;
+    rawYaw   *= 0.999f;
+    rawRoll  *= 0.999f;
 }
 
 void SensorTracker::getLatestAngularDisplacement(float* outPitch, float* outYaw, float* outRoll) {
     std::lock_guard<std::mutex> lock(dataMutex);
-    *outPitch = integratedPitch;
-    *outYaw = integratedYaw;
-    *outRoll = integratedRoll;
+    pollEvents();
+
+    // Kompensasi adalah SELISIH antara lintasan halus dan pergerakan mendadak
+    // (Peredaman hentakan langkah kaki dan getaran tangan 1:1)
+    float diffPitch = smoothPitch - rawPitch;
+    float diffYaw   = smoothYaw - rawYaw;
+    float diffRoll  = smoothRoll - rawRoll;
+
+    // Batasi maksimum simpangan agar tidak melompat melebihi batas buffer (clamping)
+    const float maxAngleRad = 0.18f; // ~10.3 derajat
+    *outPitch = std::clamp(diffPitch, -maxAngleRad, maxAngleRad);
+    *outYaw   = std::clamp(diffYaw,   -maxAngleRad, maxAngleRad);
+    *outRoll  = std::clamp(diffRoll,  -maxAngleRad, maxAngleRad);
 }
 
 void SensorTracker::reset() {
-    integratedPitch = 0.0f;
-    integratedYaw = 0.0f;
-    integratedRoll = 0.0f;
+    rawPitch = 0.0f;
+    rawYaw = 0.0f;
+    rawRoll = 0.0f;
+    smoothPitch = 0.0f;
+    smoothYaw = 0.0f;
+    smoothRoll = 0.0f;
     lastTimestampNs = 0;
 }
